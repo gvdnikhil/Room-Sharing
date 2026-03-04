@@ -59,6 +59,19 @@ export interface UsageSummaryEntry {
     total_consumed: number;
 }
 
+
+export interface RestockInsightEntry {
+    item_id: string;
+    item_name: string;
+    unit: string;
+    remaining_quantity: number;
+    total_quantity: number;
+    usage_last_n_days: number;
+    avg_daily_usage: number;
+    estimated_days_left?: number | null;
+    urgency: 'normal' | 'watch' | 'urgent';
+}
+
 export interface AuthResponse {
     access_token: string;
     token_type: string;
