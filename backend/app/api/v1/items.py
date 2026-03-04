@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -7,7 +8,13 @@ from app.db.session import get_db
 from app.models.item import Item
 from app.models.consumption import Consumption
 from app.models.user import User
-from app.schemas.schemas import ItemCreate, ItemOut, ConsumeRequest, UsageSummaryEntry
+from app.schemas.schemas import (
+    ItemCreate,
+    ItemOut,
+    ConsumeRequest,
+    UsageSummaryEntry,
+    RestockInsightEntry,
+)
 from app.api.deps import get_current_user, require_room_member
 
 router = APIRouter(tags=["Items"])
@@ -173,3 +180,65 @@ async def get_item_usage_summary(
         ))
     
     return summary
+
+
+@router.get("/rooms/{room_id}/restock-insights", response_model=list[RestockInsightEntry])
+async def get_restock_insights(
+    room_id: uuid.UUID,
+    days: int = 14,
+    current_user: User = Depends(require_room_member),
+    db: AsyncSession = Depends(get_db),
+):
+    if days < 1 or days > 90:
+        raise HTTPException(status_code=400, detail="days must be between 1 and 90")
+
+    window_start = datetime.utcnow() - timedelta(days=days)
+
+    items_result = await db.execute(select(Item).where(Item.room_id == room_id))
+    items = items_result.scalars().all()
+
+    usage_result = await db.execute(
+        select(
+            Consumption.item_id,
+            func.sum(Consumption.quantity_consumed).label("used_qty"),
+        )
+        .join(Item, Item.id == Consumption.item_id)
+        .where(Item.room_id == room_id, Consumption.created_at >= window_start)
+        .group_by(Consumption.item_id)
+    )
+    usage_map = {row.item_id: float(row.used_qty or 0) for row in usage_result.all()}
+
+    insights: list[RestockInsightEntry] = []
+    for item in items:
+        usage_last_days = usage_map.get(item.id, 0.0)
+        avg_daily_usage = usage_last_days / days
+        estimated_days_left = (
+            item.remaining_quantity / avg_daily_usage if avg_daily_usage > 0 else None
+        )
+
+        fill_ratio = (item.remaining_quantity / item.total_quantity) if item.total_quantity > 0 else 0
+        if fill_ratio <= 0.15 or (estimated_days_left is not None and estimated_days_left <= 3):
+            urgency = "urgent"
+        elif fill_ratio <= 0.35 or (estimated_days_left is not None and estimated_days_left <= 7):
+            urgency = "watch"
+        else:
+            urgency = "normal"
+
+        insights.append(
+            RestockInsightEntry(
+                item_id=item.id,
+                item_name=item.name,
+                unit=item.unit,
+                remaining_quantity=item.remaining_quantity,
+                total_quantity=item.total_quantity,
+                usage_last_n_days=usage_last_days,
+                avg_daily_usage=avg_daily_usage,
+                estimated_days_left=estimated_days_left,
+                urgency=urgency,
+            )
+        )
+
+    insights.sort(
+        key=lambda i: (0 if i.urgency == "urgent" else 1 if i.urgency == "watch" else 2, i.item_name)
+    )
+    return insights

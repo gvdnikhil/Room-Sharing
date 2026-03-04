@@ -144,3 +144,15 @@ class UsageSummaryEntry(BaseModel):
     item_name: str
     unit: str
     total_consumed: float
+
+
+class RestockInsightEntry(BaseModel):
+    item_id: uuid.UUID
+    item_name: str
+    unit: str
+    remaining_quantity: float
+    total_quantity: float
+    usage_last_n_days: float
+    avg_daily_usage: float
+    estimated_days_left: Optional[float] = None
+    urgency: str  # "normal", "watch", "urgent"

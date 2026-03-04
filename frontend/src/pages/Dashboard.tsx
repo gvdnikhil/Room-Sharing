@@ -2,12 +2,11 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import { useRoomStore } from '../store/roomStore';
-import type { Item } from '../types';
+import type { Item, RestockInsightEntry, UsageSummaryEntry } from '../types';
 import ItemCard from '../components/ItemCard';
 import ConsumeModal from '../components/ConsumeModal';
 import UsageSummaryModal from '../components/UsageSummaryModal';
 import { Plus, Check, Hash, DoorOpen, Loader2, RefreshCw, ShoppingCart, AlertTriangle } from 'lucide-react';
-import type { UsageSummaryEntry } from '../types';
 
 const Dashboard = () => {
     const { currentRoom, setRoom, clearRoom } = useRoomStore();
@@ -39,6 +38,16 @@ const Dashboard = () => {
         enabled: !!itemForSummary?.id,
     });
 
+
+    const { data: restockInsights } = useQuery<RestockInsightEntry[]>({
+        queryKey: ['restock-insights', currentRoom?.id],
+        queryFn: async () => {
+            const { data } = await api.get(`/rooms/${currentRoom?.id}/restock-insights?days=14`);
+            return data;
+        },
+        enabled: !!currentRoom?.id,
+    });
+
     // Mutations
     const joinRoomMutation = useMutation({
         mutationFn: async (invite_code: string) => {
@@ -64,6 +73,7 @@ const Dashboard = () => {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['items'] });
             queryClient.invalidateQueries({ queryKey: ['activity'] });
+            queryClient.invalidateQueries({ queryKey: ['restock-insights'] });
             setIsAddingItem(false);
             setNewItem({ name: '', total_quantity: 0, unit: 'pieces' });
         },
@@ -77,6 +87,7 @@ const Dashboard = () => {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['items'] });
             queryClient.invalidateQueries({ queryKey: ['activity'] });
+            queryClient.invalidateQueries({ queryKey: ['restock-insights'] });
             setItemToConsume(null);
         },
     });
@@ -88,6 +99,7 @@ const Dashboard = () => {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['items'] });
+            queryClient.invalidateQueries({ queryKey: ['restock-insights'] });
         },
         onError: (error: any) => {
             console.error('Delete failed:', error);
@@ -249,6 +261,45 @@ const Dashboard = () => {
                     </button>
                 </div>
             </div>
+
+
+            {restockInsights && restockInsights.length > 0 && (
+                <section className="bg-white dark:bg-slate-900 rounded-[2rem] p-6 border border-slate-100 dark:border-slate-800 shadow-sm">
+                    <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-xl font-bold text-slate-900 dark:text-white">Smart Restock Insights</h2>
+                        <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Last 14 days</span>
+                    </div>
+                    <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+                        {restockInsights.slice(0, 6).map((insight) => (
+                            <div key={insight.item_id} className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700">
+                                <div className="flex items-center justify-between">
+                                    <p className="font-semibold text-slate-900 dark:text-white">{insight.item_name}</p>
+                                    <span className={`text-xs px-2 py-1 rounded-full font-bold ${
+                                        insight.urgency === 'urgent'
+                                            ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+                                            : insight.urgency === 'watch'
+                                            ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+                                            : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                                    }`}>
+                                        {insight.urgency}
+                                    </span>
+                                </div>
+                                <p className="text-sm mt-2 text-slate-600 dark:text-slate-300">
+                                    {insight.remaining_quantity} / {insight.total_quantity} {insight.unit} left
+                                </p>
+                                <p className="text-xs mt-1 text-slate-500 dark:text-slate-400">
+                                    Avg daily usage: {insight.avg_daily_usage.toFixed(2)} {insight.unit}
+                                </p>
+                                <p className="text-xs mt-1 font-medium text-slate-700 dark:text-slate-200">
+                                    {insight.estimated_days_left
+                                        ? `Estimated runout in ${Math.max(1, Math.round(insight.estimated_days_left))} day(s)`
+                                        : 'Not enough usage data to estimate runout'}
+                                </p>
+                            </div>
+                        ))}
+                    </div>
+                </section>
+            )}
 
             {/* Items Grid */}
             {itemsError ? (
